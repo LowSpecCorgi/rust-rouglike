@@ -34,8 +34,10 @@ impl Object {
     ///
     /// `dy: i32` = The amount you want to move the character on the y axis
     pub fn move_by(&mut self, dx: i32, dy: i32, game: &game::Game) {
-        self.x += dx;
-        self.y += dy;
+        if !game.map[(self.x + dx) as usize][(self.y + dy) as usize].blocked {
+            self.x += dx;
+            self.y += dy;
+        }
     }
 
     /// Set the colour and draws the character that represents this Object at it's position

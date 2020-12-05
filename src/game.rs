@@ -1,7 +1,5 @@
-use crate::map;
-
-pub type Map = Vec<Vec<map::Tile>>;
+use crate::map::map_util;
 
 pub struct Game {
-    pub map: Map,
+    pub map: map_util::Map,
 }
