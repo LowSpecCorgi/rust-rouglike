@@ -2,6 +2,8 @@ use tcod::colors::*;
 use tcod::console::*;
 use tcod::input::Key;
 use tcod::input::KeyCode::*;
+use tcod::map::{FovAlgorithm, Map as FovMap};
+
 mod game;
 mod map;
 mod object;
@@ -15,15 +17,31 @@ const SCREEN_HEIGHT: i32 = 50;
 const MAP_WIDTH: i32 = 80;
 const MAP_HEIGHT: i32 = 45;
 
+// FOV parameters
+const FOV_ALGO: FovAlgorithm = FovAlgorithm::Basic;
+const FOV_LIGHT_WALLS: bool = true;
+const TORCH_RADIUS: i32 = 10;
+
 // Parameters for dungeon generator
 const ROOM_MAX_SIZE: i32 = 10;
 const ROOM_MIX_SIZE: i32 = 6;
 const MAX_ROOMS: i32 = 30;
 
+// Colours
 const COLOR_DARK_WALL: Color = Color { r: 0, g: 0, b: 100 };
+const COLOR_LIGHT_WALL: Color = Color {
+    r: 130,
+    g: 110,
+    b: 50,
+};
 const COLOR_DARK_GROUND: Color = Color {
     r: 50,
     g: 50,
+    b: 50,
+};
+const COLOR_LIGHT_GROUND: Color = Color {
+    r: 200,
+    g: 180,
     b: 50,
 };
 
@@ -33,25 +51,36 @@ const LIMIT_FPS: i32 = 24;
 struct Tcod {
     root: Root,
     con: Offscreen,
+    fov: FovMap,
 }
 
 // Renders everythng
-fn render_all(tcod: &mut Tcod, game: &game::Game, objects: &[Object]) {
+fn render_all(tcod: &mut Tcod, game: &game::Game, objects: &[Object], fov_recompute: bool) {
     for y in 0..MAP_HEIGHT {
         for x in 0..MAP_WIDTH {
-            let wall = game.map[x as usize][y as usize].block_sight;
-            if wall {
-                tcod.con
-                    .set_char_background(x, y, COLOR_DARK_WALL, BackgroundFlag::Set);
-            } else {
-                tcod.con
-                    .set_char_background(x, y, COLOR_DARK_GROUND, BackgroundFlag::Set);
+            if fov_recompute {
+                let player = &objects[0];
+                tcod.fov
+                    .compute_fov(player.x, player.y, TORCH_RADIUS, FOV_LIGHT_WALLS, FOV_ALGO);
             }
+
+            let visible = tcod.fov.is_in_fov(x, y);
+            let wall = game.map[x as usize][y as usize].block_sight;
+            let color = match (visible, wall) {
+                (false, true) => COLOR_DARK_WALL,
+                (false, false) => COLOR_LIGHT_WALL,
+                (true, true) => COLOR_LIGHT_WALL,
+                (true, false) => COLOR_LIGHT_GROUND,
+            };
+            tcod.con
+                .set_char_background(x, y, color, BackgroundFlag::Set);
         }
     }
 
     for object in objects {
-        object.draw(&mut tcod.con);
+        if tcod.fov.is_in_fov(object.x, object.y) {
+            object.draw(&mut tcod.con);
+        }
     }
 
     // Blit the contents of "con" and the root console to present it
@@ -85,15 +114,20 @@ fn main() {
         .title("Roguelike")
         .init();
     let con = Offscreen::new(MAP_WIDTH, MAP_HEIGHT);
+    let fov_map: FovMap = FovMap::new(MAP_WIDTH, MAP_HEIGHT);
+    let mut tcod = Tcod {
+        root: root,
+        con: con,
+        fov: fov_map,
+    };
 
-    let mut tcod = Tcod { root, con };
     tcod::system::set_fps(LIMIT_FPS);
 
     let player = Object::new(0, 0, '@', WHITE);
 
     let mut objects = [player];
 
-    let gameObj = game::Game {
+    let game_obj = game::Game {
         // Generate map
         map: map::map_util::make_map(
             MAP_WIDTH,
@@ -105,13 +139,28 @@ fn main() {
         ),
     };
 
+    for y in 0..MAP_HEIGHT {
+        for x in 0..MAP_WIDTH {
+            tcod.fov.set(
+                x,
+                y,
+                !game_obj.map[x as usize][y as usize].block_sight,
+                !game_obj.map[x as usize][y as usize].blocked,
+            );
+        }
+    }
+
+    let mut previous_player_position = (-1, -1);
     while !tcod.root.window_closed() {
         tcod.con.set_default_background(BLACK);
         tcod.con.clear();
 
-        render_all(&mut tcod, &gameObj, &mut objects);
+        let fov_recompute = previous_player_position != (objects[0].x, objects[0].y);
+        render_all(&mut tcod, &game_obj, &mut objects, fov_recompute);
 
         tcod.root.flush();
-        let keys = handle_keys(&mut tcod, &mut objects[0], &gameObj);
+
+        previous_player_position = (player.x, player.y);
+        let keys = handle_keys(&mut tcod, &mut objects[0], &game_obj);
     }
 }

@@ -108,9 +108,11 @@ pub mod map_util {
             let x = rand::thread_rng().gen_range(0, map_width - w);
             let y = rand::thread_rng().gen_range(0, map_height - h);
             let new_room = super::Rect::new(x, y, w, h);
+
             let failed = rooms
                 .iter()
                 .any(|other_room| new_room.intersects_with(other_room));
+
             if !failed {
                 create_room(new_room, &mut map);
 

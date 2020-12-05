@@ -2,6 +2,7 @@ use crate::game;
 use tcod::colors::*;
 use tcod::console::*;
 
+#[derive(Clone, Copy, Debug)]
 pub struct Object {
     pub x: i32,
     pub y: i32,
