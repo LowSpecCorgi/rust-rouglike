@@ -26,6 +26,8 @@ const TORCH_RADIUS: i32 = 10;
 const ROOM_MAX_SIZE: i32 = 10;
 const ROOM_MIX_SIZE: i32 = 6;
 const MAX_ROOMS: i32 = 30;
+const MAX_ROOM_MONSTERS: i32 = 3;
+const PLAYER: usize = 0;
 
 // Colours
 const COLOR_DARK_WALL: Color = Color { r: 0, g: 0, b: 100 };
@@ -48,18 +50,17 @@ const COLOR_LIGHT_GROUND: Color = Color {
 // Cap the framerate at 24 FPS
 const LIMIT_FPS: i32 = 24;
 
-struct Tcod {
-    root: Root,
-    con: Offscreen,
-    fov: FovMap,
-}
-
 // Renders everythng
-fn render_all(tcod: &mut Tcod, game: &game::Game, objects: &[Object], fov_recompute: bool) {
+fn render_all(
+    tcod: &mut game::Tcod,
+    game: &mut game::Game,
+    objects: &[Object],
+    fov_recompute: bool,
+) {
     for y in 0..MAP_HEIGHT {
         for x in 0..MAP_WIDTH {
             if fov_recompute {
-                let player = &objects[0];
+                let player = &objects[PLAYER];
                 tcod.fov
                     .compute_fov(player.x, player.y, TORCH_RADIUS, FOV_LIGHT_WALLS, FOV_ALGO);
             }
@@ -72,8 +73,16 @@ fn render_all(tcod: &mut Tcod, game: &game::Game, objects: &[Object], fov_recomp
                 (true, true) => COLOR_LIGHT_WALL,
                 (true, false) => COLOR_LIGHT_GROUND,
             };
-            tcod.con
-                .set_char_background(x, y, color, BackgroundFlag::Set);
+
+            let explored = &mut game.map[x as usize][y as usize].explored;
+
+            if visible {
+                *explored = true;
+            }
+            if *explored {
+                tcod.con
+                    .set_char_background(x, y, color, BackgroundFlag::Set);
+            }
         }
     }
 
@@ -95,14 +104,30 @@ fn render_all(tcod: &mut Tcod, game: &game::Game, objects: &[Object], fov_recomp
     );
 }
 
-fn handle_keys(tcod: &mut Tcod, player: &mut Object, game: &game::Game) {
+fn handle_keys(
+    tcod: &mut game::Tcod,
+    objects: &mut Vec<Object>,
+    game: &game::Game,
+) -> object::PlayerAction {
     let key = tcod.root.wait_for_keypress(true);
-    match key {
-        Key { code: Up, .. } => player.move_by(0, -1, game),
-        Key { code: Down, .. } => player.move_by(0, 1, game),
-        Key { code: Left, .. } => player.move_by(-1, 0, game),
-        Key { code: Right, .. } => player.move_by(1, 0, game),
-        _ => {}
+    match (key, key.text(), objects[PLAYER].alive) {
+        (Key { code: Up, .. }, _, true) => {
+            object::player_util::player_move_or_attack(PLAYER, 0, -1, &game, objects);
+            object::PlayerAction::TookTurn
+        }
+        (Key { code: Down, .. }, _, true) => {
+            object::player_util::player_move_or_attack(PLAYER, 0, 1, &game, objects);
+            object::PlayerAction::TookTurn
+        }
+        (Key { code: Left, .. }, _, true) => {
+            object::player_util::player_move_or_attack(PLAYER, -1, 0, &game, objects);
+            object::PlayerAction::TookTurn
+        }
+        (Key { code: Right, .. }, _, true) => {
+            object::player_util::player_move_or_attack(PLAYER, 1, 0, &game, objects);
+            object::PlayerAction::TookTurn
+        }
+        _ => object::PlayerAction::DidntTakeTurn,
     }
 }
 
@@ -115,7 +140,7 @@ fn main() {
         .init();
     let con = Offscreen::new(MAP_WIDTH, MAP_HEIGHT);
     let fov_map: FovMap = FovMap::new(MAP_WIDTH, MAP_HEIGHT);
-    let mut tcod = Tcod {
+    let mut tcod = game::Tcod {
         root: root,
         con: con,
         fov: fov_map,
@@ -123,11 +148,19 @@ fn main() {
 
     tcod::system::set_fps(LIMIT_FPS);
 
-    let player = Object::new(0, 0, '@', WHITE);
+    let mut player = Object::new(0, 0, '@', BLACK, "player", true);
 
-    let mut objects = [player];
+    player.fighter = Some(object::Fighter {
+        max_hp: 30,
+        hp: 30,
+        defense: 2,
+        power: 5,
+    });
 
-    let game_obj = game::Game {
+    player.alive = true;
+
+    let mut objects = vec![player];
+    let mut game_obj = game::Game {
         // Generate map
         map: map::map_util::make_map(
             MAP_WIDTH,
@@ -135,7 +168,9 @@ fn main() {
             ROOM_MIX_SIZE,
             ROOM_MAX_SIZE,
             MAX_ROOMS,
-            &mut objects[0],
+            MAX_ROOM_MONSTERS,
+            &mut objects,
+            PLAYER,
         ),
     };
 
@@ -155,12 +190,21 @@ fn main() {
         tcod.con.set_default_background(BLACK);
         tcod.con.clear();
 
-        let fov_recompute = previous_player_position != (objects[0].x, objects[0].y);
-        render_all(&mut tcod, &game_obj, &mut objects, fov_recompute);
+        let fov_recompute = previous_player_position != objects[PLAYER].pos();
+        render_all(&mut tcod, &mut game_obj, &mut objects, fov_recompute);
 
         tcod.root.flush();
 
-        previous_player_position = (player.x, player.y);
-        let keys = handle_keys(&mut tcod, &mut objects[0], &game_obj);
+        previous_player_position = objects[PLAYER].pos();
+        let player_action = handle_keys(&mut tcod, &mut objects, &game_obj);
+
+        // Allow monsters to take their turns
+        if objects[PLAYER].alive && player_action != object::PlayerAction::DidntTakeTurn {
+            for id in 0..objects.len() {
+                if objects[id].ai.is_some() {
+                    game_obj.ai_take_turn(id, PLAYER, &tcod, &mut objects);
+                }
+            }
+        }
     }
 }

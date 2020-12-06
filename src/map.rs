@@ -1,6 +1,7 @@
 #[derive(Clone, Copy, Debug)]
 pub struct Tile {
     pub blocked: bool,
+    pub explored: bool,
     pub block_sight: bool,
 }
 
@@ -9,6 +10,7 @@ impl Tile {
     pub fn empty() -> Self {
         Tile {
             blocked: false,
+            explored: false,
             block_sight: false,
         }
     }
@@ -17,6 +19,7 @@ impl Tile {
     pub fn wall() -> Self {
         Tile {
             blocked: true,
+            explored: false,
             block_sight: true,
         }
     }
@@ -65,8 +68,11 @@ impl Rect {
 
 /// A bunch if utility functions for making and generating the map
 pub mod map_util {
+    use crate::object::*;
     use rand::Rng;
     use std::cmp::*;
+    use tcod::colors::*;
+
     pub type Map = Vec<Vec<super::Tile>>;
 
     /// Takes a rect and places it in the map
@@ -91,6 +97,59 @@ pub mod map_util {
             map[x as usize][y as usize] = super::Tile::empty();
         }
     }
+
+    /// Places objects around the room
+    fn place_objects(
+        room: super::Rect,
+        map: &Map,
+        objects: &mut Vec<Object>,
+        max_room_monters: i32,
+    ) {
+        let num_monsters = rand::thread_rng().gen_range(0, max_room_monters + 1);
+
+        for _ in 0..num_monsters {
+            let x = rand::thread_rng().gen_range(room.x1 + 1, room.x2);
+            let y = rand::thread_rng().gen_range(room.y1 + 1, room.y2);
+            if !is_blocked(x, y, map, objects) {
+                let mut monster = if rand::random::<f32>() < 0.8 {
+                    let mut orc = Object::new(x, y, 'o', DESATURATED_GREEN, "orc", true);
+                    orc.fighter = Some(Fighter {
+                        max_hp: 10,
+                        hp: 10,
+                        defense: 0,
+                        power: 3,
+                    });
+                    orc.ai = Some(Ai::Basic);
+                    orc
+                } else {
+                    let mut troll = Object::new(x, y, 'T', DARKER_GREEN, "troll", true);
+                    troll.fighter = Some(Fighter {
+                        max_hp: 16,
+                        hp: 16,
+                        defense: 1,
+                        power: 4,
+                    });
+                    troll.ai = Some(Ai::Basic);
+                    troll
+                };
+
+                monster.alive = true;
+                objects.push(monster);
+            }
+        }
+    }
+
+    /// Checks whether a tile is blocked
+    /// Returns `bool` ?is_blocked
+    pub fn is_blocked(x: i32, y: i32, map: &Map, objects: &[Object]) -> bool {
+        if map[x as usize][y as usize].blocked {
+            return true;
+        }
+
+        objects
+            .iter()
+            .any(|object| object.blocks && object.pos() == (x, y))
+    }
     /// Fills the map
     pub fn make_map(
         map_width: i32,
@@ -98,7 +157,9 @@ pub mod map_util {
         room_min_size: i32,
         room_max_size: i32,
         max_rooms: i32,
-        player: &mut crate::object::Object,
+        max_room_monters: i32,
+        objects: &mut Vec<Object>,
+        player: usize,
     ) -> Map {
         let mut map = vec![vec![super::Tile::wall(); map_height as usize]; map_width as usize];
         let mut rooms = vec![];
@@ -108,19 +169,18 @@ pub mod map_util {
             let x = rand::thread_rng().gen_range(0, map_width - w);
             let y = rand::thread_rng().gen_range(0, map_height - h);
             let new_room = super::Rect::new(x, y, w, h);
-
             let failed = rooms
                 .iter()
                 .any(|other_room| new_room.intersects_with(other_room));
 
             if !failed {
                 create_room(new_room, &mut map);
-
+                place_objects(new_room, &mut map, objects, 3);
                 let (new_x, new_y) = new_room.center();
 
                 if rooms.is_empty() {
-                    player.x = new_x;
-                    player.y = new_y;
+                    objects[player as usize].x = new_x;
+                    objects[player as usize].y = new_y;
                 } else {
                     let (prev_x, prev_y) = rooms[rooms.len() - 1].center();
 
